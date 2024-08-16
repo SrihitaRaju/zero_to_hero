@@ -1,0 +1,25 @@
+
+!python gpt.py
+10805078  parameters
+step 0: train loss 4.5861, val loss 4.5867
+step 500: train loss 1.6886, val loss 1.6943
+step 1000: train loss 1.3297, val loss 1.3467
+step 1500: train loss 1.2053, val loss 1.2529
+step 2000: train loss 1.1297, val loss 1.2052
+step 2500: train loss 1.0713, val loss 1.1715
+step 3000: train loss 1.0224, val loss 1.1588
+step 3500: train loss 0.9837, val loss 1.1519
+step 4000: train loss 0.9436, val loss 1.1549
+step 4500: train loss 0.9043, val loss 1.1531
+step 4999: train loss 0.8685, val loss 1.1550
+
+A mill of the narrow presence and could see a 
+require effort from the courtea. The sound oak 
+of dark and came to the desk. It was glitter rather
+ than the materials are demonstrationate and arriving 
+ winging some exams. He had known to perform that. 
+ No more, only the thing manner I’d been in the waters, 
+ I knew what it would leave was two hours too.
+  And these monesth than and goes to see, only I’d hope and manage. 
+  It would have for me glining the trees of talking and to know 
+  where someone had growt
