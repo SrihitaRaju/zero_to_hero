@@ -184,9 +184,6 @@ class DataLoaderLite:
         return x,y
 
 
-#TODO - HOW is dividing by sqrt(N) the same as changing the variance of the weights to c_proj?
-#HOW are we sharing weight between embedding and linear weight?!
-
 import time
 device = "cpu"
 if torch.cuda.is_available():
@@ -200,11 +197,12 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 
 #model = GPT.from_pretrained('gpt2')
-train_loader = DataLoaderLite(B=4, T=512)
+train_loader = DataLoaderLite(B=16, T=1024)
 torch.set_float32_matmul_precision("high")
 model = GPT(GPTConfig())
 #model.eval()
 model.to(device)
+model = torch.compile(model)
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 for i in range(50):
     t0 = time.time()
@@ -215,10 +213,10 @@ for i in range(50):
         logits, loss = model(x, y)
     loss.backward()
     optimizer.step()
-    #torch.cuda.synchronize() #1
+    torch.cuda.synchronize() #1
     t1 = time.time()
     dt = (t1 - t0) * 1000
-    tokens_per_sec  = (train_loader.B * train_loader * T) / (t1 - t0)
+    tokens_per_sec  = (train_loader.B * train_loader.T) / (t1 - t0)
     print(f"step {i}, loss: {loss.item()}, dt: {dt:.2f}ms, tok/sec: {tokens_per_sec:.2f}")
 print(loss.item())
 import sys; sys.exit(0)
