@@ -221,13 +221,14 @@ if torch.cuda.is_available():
     device = "cuda"
 elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
     device = "mps"
+device='cpu'
 print(f"using device: {device}")
 
 torch.manual_seed(1337)
 if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 
-train_loader = DataLoaderLite(B=16, T=1024)
+train_loader = DataLoaderLite(B=2, T=32)
 
 torch.set_float32_matmul_precision('high')
 
@@ -247,7 +248,7 @@ for i in range(50):
         logits, loss = model(x, y)
     loss.backward()
     optimizer.step()
-    torch.cuda.synchronize() # wait for the GPU to finish work
+    #torch.cuda.synchronize() # wait for the GPU to finish work
     t1 = time.time()
     dt = (t1 - t0)*1000 # time difference in miliseconds
     tokens_per_sec = (train_loader.B * train_loader.T) / (t1 - t0)
@@ -292,3 +293,4 @@ for i in range(num_return_sequences):
     tokens = x[i, :max_length].tolist()
     decoded = enc.decode(tokens)
     print(">", decoded)
+    
