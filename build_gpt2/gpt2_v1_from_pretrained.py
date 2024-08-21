@@ -216,10 +216,11 @@ class DataLoaderLite:
 
         #print(f"num tokens {len(self.tokens)}")
         #print(f"1 epoch is {len(self.tokens) // (B*T)} batches")
-        self.current_shard = 0
+        
         self.reset()
 
     def reset(self):
+        self.current_shard = 0
         self.tokens = load_tokens(self.shards[self.current_shard])
         self.current_position = self.B * self.T * self.process_rank
     
@@ -309,7 +310,8 @@ def get_lr(it):
         coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff starts at 1 and goes to 0
         return min_lr + coeff * (max_lr - min_lr)
 
-
+import tiktoken
+enc = tiktoken.get_encoding('gpt2')
 
 optimizer = raw_model.configure_optimizers(weight_decay=0.1, learning_rate=6e-4, device_type=device_type)
 for step in range(max_steps):
@@ -339,6 +341,29 @@ for step in range(max_steps):
     # disabled because torch.compile throws a scary error i can't solve rn
     # if you disable torch.compile, this code works fine
 
+    if step % 100 == 0 and step > 0: # and False:
+        model.eval()
+        num_return_sequences = 4
+        max_length = 32
+        tokens = enc.encode("Hello, I'm a language model,")
+        tokens = torch.tensor(tokens, dtype=torch.long)
+        tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1) #4,T
+        xgen = tokens.to(device)
+        sample_rng = torch.Generator(device=device)
+        sample_rng.manual_seed(42 + ddp_rank)
+        while xgen.size(1) < max_length:
+            with torch.no_grad():
+                logits, loss = model(xgen)
+                logits = logits[:,-1,:] #B, vocab_size
+                probs = F.softmax(logits, dim=-1)
+                topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
+                ix = torch.multinomial(topk_probs, 1, generator=sample_rng) #B, 1 
+                xcol = torch.gather(topk_indices, -1, ix)
+                xgen = torch.cat((xgen, xcol), dim=1)
+        for i in range(num_return_sequences):
+            tokens = xgen[i,:max_length].tolist()
+            decoded = enc.decode(tokens)
+            print(f"rank {ddp_rank} sample {i}: {decoded}")
 
     model.train()
     optimizer.zero_grad()
@@ -374,34 +399,6 @@ if ddp:
 import sys; sys.exit(0)
 
 
-import tiktoken
-enc = tiktoken.get_encoding('gpt2')
-model.eval()
-num_return_sequences = 5
-max_length = 30
-tokens = enc.encode("Hello, I'm a language model,")
-tokens = torch.tensor(tokens, dtype=torch.long)
-tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
-x = tokens.to(device)
 
-# generate! right now x is (B, T) where B = 5, T = 8
-# set the seed to 42
-torch.manual_seed(42)
-torch.cuda.manual_seed(42)
 
-while x.size(1) < max_length:
-    with torch.no_grad():
-        logits = model(x)
-        logits = logits[:,-1,:] #B, vocab, size
-        probs = F.softmax(logits, dim=-1)
-        topk_probs, topk_indices = torch.topk(probs, 50, dim=1)
-        ix = torch.multinomial(topk_probs, 1) #B, 1
-        xcol = torch.gather(topk_indices, -1, ix)
-        x = torch.cat((x, xcol), dim=1)
-
-# print the generated text
-for i in range(num_return_sequences):
-    tokens = x[i, :max_length].tolist()
-    decoded = enc.decode(tokens)
-    print(">", decoded)
 
