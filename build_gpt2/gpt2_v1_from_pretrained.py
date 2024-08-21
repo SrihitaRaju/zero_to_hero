@@ -177,12 +177,14 @@ class GPT(nn.Module):
         ]
         num_decay_params = sum(p.numel() for p in decay_params)
         num_nodecay_params = sum(p.numel() for p in nodecay_params)
-        print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
-        print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+        if master_process:
+            print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+            print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
         # Create AdamW optimizer and use the fused version if it is available
         fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
         use_fused = fused_available and device_type == 'cuda' 
-        print(f"using fused AdamW: {use_fused}")
+        if master_process:
+            print(f"using fused AdamW: {use_fused}")
         optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=(0.9, 0.95), eps=1e-8, fused=use_fused)
         return optimizer
 
@@ -203,7 +205,7 @@ class DataLoaderLite:
 
         assert split in {'train', 'val'}
         # get the shard filenames
-        data_root = "~/srihita1802/edu_fineweb10B"
+        data_root = "edu_fineweb10B"
         shards = os.listdir(data_root)
         shards = [s for s in shards if split in s]
         shards = sorted(shards)
@@ -327,7 +329,7 @@ for step in range(max_steps):
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0) # we clip the gradients before updating params
     lr = get_lr(step)
     for param_group in optimizer.param_groups:
-        param_group['lr'] - lr
+        param_group['lr'] = lr
     optimizer.step()
     torch.cuda.synchronize() 
     t1 = time.time()
