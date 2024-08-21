@@ -20,7 +20,9 @@ remote_name = "sample-10BT"
 shard_size = int(1e8) # 100M tokens per shard, total of 100 shards
 
 # create the cache the local directory if it doesn't exist yet
-DATA_CACHE_DIR = os.path.join(os.path.dirname(__file__), local_dir)
+#FILESYSTEM = os.path.dirname(__file__)
+FILESYSTEM = '/home/ubuntu/SrihitaVatsavayaVirginia'
+DATA_CACHE_DIR = os.path.join(FILESYSTEM, local_dir)
 os.makedirs(DATA_CACHE_DIR, exist_ok=True)
 
 # download the dataset
