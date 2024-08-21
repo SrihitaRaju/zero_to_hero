@@ -204,7 +204,8 @@ class DataLoaderLite:
 
         assert split in {'train', 'val'}
         # get the shard filenames
-        data_root = "edu_fineweb10B"
+        FILESYSTEM = '/home/ubuntu/SrihitaVatsavayaVirginia'
+        data_root = os.path.join(FILESYSTEM, "edu_fineweb10B")
         shards = os.listdir(data_root)
         shards = [s for s in shards if split in s]
         shards = sorted(shards)
@@ -290,7 +291,9 @@ torch.set_float32_matmul_precision("high")
 model = GPT(GPTConfig(vocab_size=50304))
 #model.eval()
 model.to(device)
-#model = torch.compile(model)
+use_compile = False # torch.compile interferes with HellaSwag eval and Generation. TODO fix
+if use_compile:
+    model = torch.compile(model)
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 raw_model = model.module if ddp else model
@@ -314,11 +317,19 @@ import tiktoken
 enc = tiktoken.get_encoding('gpt2')
 
 optimizer = raw_model.configure_optimizers(weight_decay=0.1, learning_rate=6e-4, device_type=device_type)
+
+log_dir = 'logs'
+os.makedirs(log_dir, exist_ok=True)
+log_file = os.path.join(log_dir, f"log.txt")
+with open(log_file, 'w') as f:
+    pass
+
 for step in range(max_steps):
     t0 = time.time()
+    last_step = (step == max_steps - 1)
 
 
-    if step % 100 == 0: #eval over say 20 steps
+    if step % 250 == 0 or last_step: #eval over say 20 steps
         model.eval()
         val_loader.reset()
         with torch.no_grad():
@@ -335,13 +346,15 @@ for step in range(max_steps):
             dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG) #now all ranks will have the same average value after backward pass in this epoch
         if master_process:
             print(f"validation loss: {val_loss_accum.item():.4f}")
+            with open(log_file, 'w') as f:
+                f.write(f"{step} val {val_loss_accum.item():.4f}\n")
 
 
     # once in a while generate from the model (except step 0, which is noise)
     # disabled because torch.compile throws a scary error i can't solve rn
     # if you disable torch.compile, this code works fine
 
-    if step % 100 == 0 and step > 0: # and False:
+    if ((step > 0 and step % 250 == 0) or last_step) and (not use_compile):
         model.eval()
         num_return_sequences = 4
         max_length = 32
@@ -353,7 +366,8 @@ for step in range(max_steps):
         sample_rng.manual_seed(42 + ddp_rank)
         while xgen.size(1) < max_length:
             with torch.no_grad():
-                logits, loss = model(xgen)
+                with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                    logits, loss = model(xgen)
                 logits = logits[:,-1,:] #B, vocab_size
                 probs = F.softmax(logits, dim=-1)
                 topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
@@ -393,6 +407,8 @@ for step in range(max_steps):
     tokens_per_sec = tokens_processed / dt
     if master_process:
         print(f"step {step:5d} | loss: {loss_accum.item():.6f}| lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
+        with open(log_file, 'w') as f:
+            f.write(f"{step} train {loss_accum.item():.6f}\n")
     #print(loss.item())
 if ddp:
     destroy_process_group()
