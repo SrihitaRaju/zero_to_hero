@@ -15,8 +15,6 @@ class CausalSelfAttention(nn.Module):
         self.c_proj.NANOGPT_SCALE_INIT = 1
         self.n_head = config.n_head
         self.n_embd = config.n_embd
-        self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
-                             .view(1,1,config.block_size, config.block_size))
         
     def forward(self, x):
         B,T,C = x.shape
@@ -191,6 +189,7 @@ class GPT(nn.Module):
 import numpy as np
 def load_tokens(filename):
     npt = np.load(filename)
+    npt = npt.astype(np.int32)
     ptt = torch.tensor(npt, dtype=torch.long)
     return ptt
 
@@ -218,6 +217,9 @@ class DataLoaderLite:
         #print(f"num tokens {len(self.tokens)}")
         #print(f"1 epoch is {len(self.tokens) // (B*T)} batches")
         self.current_shard = 0
+        self.reset()
+
+    def reset(self):
         self.tokens = load_tokens(self.shards[self.current_shard])
         self.current_position = self.B * self.T * self.process_rank
     
@@ -271,7 +273,7 @@ if torch.cuda.is_available():
 
 #model = GPT.from_pretrained('gpt2')
 
-B = 64 #will this work?
+B = 32 #will this work?
 T = 1024
 total_batch_size = 524288
 assert total_batch_size % (B*T*ddp_world_size) == 0
@@ -282,11 +284,12 @@ if master_process:
 
 
 train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="train")
+val_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="val")
 torch.set_float32_matmul_precision("high")
 model = GPT(GPTConfig(vocab_size=50304))
 #model.eval()
 model.to(device)
-model = torch.compile(model)
+#model = torch.compile(model)
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 raw_model = model.module if ddp else model
@@ -312,17 +315,43 @@ optimizer = raw_model.configure_optimizers(weight_decay=0.1, learning_rate=6e-4,
 for step in range(max_steps):
     t0 = time.time()
 
+
+    if step % 100 == 0: #eval over say 20 steps
+        model.eval()
+        val_loader.reset()
+        with torch.no_grad():
+            val_loss_accum = 0.0
+            val_loss_steps = 20
+            for _ in range(val_loss_steps):
+                x, y = val_loader.next_batch()
+                x,y = x.to(device), y.to(device)
+                with torch.autocast(device_type=device_type, dtype=torch.bfloat16): #2
+                    logits, loss = model(x, y)
+                loss = loss / val_loss_steps
+                val_loss_accum += loss.detach()
+        if ddp:
+            dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG) #now all ranks will have the same average value after backward pass in this epoch
+        if master_process:
+            print(f"validation loss: {val_loss_accum.item():.4f}")
+
+
+    # once in a while generate from the model (except step 0, which is noise)
+    # disabled because torch.compile throws a scary error i can't solve rn
+    # if you disable torch.compile, this code works fine
+
+
+    model.train()
     optimizer.zero_grad()
     loss_accum = 0
     for micro_step in range(grad_accum_steps):
         x, y = train_loader.next_batch()
         x,y = x.to(device), y.to(device)
+        if ddp:
+            model.require_backward_grad_sync = (micro_step ==grad_accum_steps-1) #this is when the gradients will get despatched   
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16): #2
             logits, loss = model(x, y) #forward pass is the same
         loss = loss / grad_accum_steps
         loss_accum += loss.detach()
-        if ddp:
-            model.require_backward_grad_sync = (micro_step ==grad_accum_steps-1) #this is when the gradients will get despatched   
         loss.backward()
     if ddp:
         dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG) #now all ranks will have the same average value after backward pass in this epoch
@@ -331,7 +360,8 @@ for step in range(max_steps):
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     optimizer.step()
-    torch.cuda.synchronize() 
+    if device_type == "cuda":
+        torch.cuda.synchronize() 
     t1 = time.time()
     dt = t1 - t0 # time difference in seconds
     tokens_processed = train_loader.B * train_loader.T * grad_accum_steps * ddp_world_size
