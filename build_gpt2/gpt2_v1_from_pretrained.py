@@ -346,7 +346,7 @@ for step in range(max_steps):
             dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG) #now all ranks will have the same average value after backward pass in this epoch
         if master_process:
             print(f"validation loss: {val_loss_accum.item():.4f}")
-            with open(log_file, 'w') as f:
+            with open(log_file, 'a') as f:
                 f.write(f"{step} val {val_loss_accum.item():.4f}\n")
 
 
@@ -407,7 +407,7 @@ for step in range(max_steps):
     tokens_per_sec = tokens_processed / dt
     if master_process:
         print(f"step {step:5d} | loss: {loss_accum.item():.6f}| lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
-        with open(log_file, 'w') as f:
+        with open(log_file, 'a') as f:
             f.write(f"{step} train {loss_accum.item():.6f}\n")
     #print(loss.item())
 if ddp:
