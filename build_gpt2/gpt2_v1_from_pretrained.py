@@ -4,7 +4,7 @@ import torch
 import inspect
 import torch.nn as nn
 from torch.nn import functional as F
-
+from hellaswag import render_example, iterate_examples
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config):
@@ -238,6 +238,22 @@ class DataLoaderLite:
         return x,y
 
 
+def get_most_likely_row(tokens, mask, logits):
+    shift_logits = logits[:,:-1,:].contiguous()
+    shift_tokens = tokens[:,1:].contiguous()
+    flat_shift_logits = shift_logits.view(-1, shift_logits.size(-1))
+    flat_shift_tokens = shift_tokens.view(-1)
+    shift_losses = F.cross_entropy(flat_shift_logits, flat_shift_tokens, reduction='none')
+    shift_losses = shift_losses.view(tokens.size(0), -1)
+    shift_mask = mask[:,1:].contiguous()
+    masked_shift_losses = shift_losses * shift_mask
+    sum_loss = masked_shift_losses.sum(dim=1)
+    avg_loss = sum_loss / shift_mask.sum(dim=1)
+    pred_norm = avg_loss.argmin().item()
+    return pred_norm
+
+
+
 from torch.distributed import init_process_group, destroy_process_group
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
@@ -359,6 +375,37 @@ for step in range(max_steps):
                     # you might also want to add optimizer.state_dict() and
                     # rng seeds etc., if you wanted to more exactly resume training
                     torch.save(checkpoint, checkpoint_path)
+
+    if (step % 250 == 0 or last_step) and (not use_compile): #already eval mode
+        num_correct_norm = 0
+        num_total = 0
+        for i, example in enumerate(iterate_examples("val")):
+            if i % ddp_world_size != ddp_rank:
+                continue
+            _, tokens, mask, label = render_example(example)
+            tokens = tokens.to(device)
+            mask = mask.to(device)
+            with torch.no_grad():
+                with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                    logits, loss = model(tokens)
+                pred_norm = get_most_likely_row(tokens, mask, logits)
+            num_total += 1
+            num_correct_norm += int(pred_norm == label)
+        
+        if ddp:
+            num_total = torch.tensor(num_total, dtype=torch.long, device=device)
+            num_correct_norm = torch.tensor(num_correct_norm, dtype=torch.long, device=device)
+            dist.all_reduce(num_total, op=dist.ReduceOp.SUM)
+            dist.all_reduce(num_correct_norm, op=dist.ReduceOp.SUM)
+            num_total = num_total.item()    
+            num_correct_norm = num_correct_norm.item()
+        acc_norm = num_correct_norm / num_total
+        if master_process:
+            print(f"HellaSwag accuracy: {num_correct_norm}/{num_total}={acc_norm:.4f}")
+            with open(log_file, "a") as f:
+                f.write(f"{step} hella {acc_norm:.4f}\n")
+
+
 
 
     # once in a while generate from the model (except step 0, which is noise)
