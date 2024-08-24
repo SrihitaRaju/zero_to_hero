@@ -204,7 +204,7 @@ class DataLoaderLite:
 
         assert split in {'train', 'val'}
         # get the shard filenames
-        FILESYSTEM = '/home/ubuntu/SrihitaVatsavayaVirginia'
+        FILESYSTEM = '/home/ubuntu/SrihitaVatsavayaIllinois'
         data_root = os.path.join(FILESYSTEM, "edu_fineweb10B")
         shards = os.listdir(data_root)
         shards = [s for s in shards if split in s]
@@ -291,7 +291,7 @@ if torch.cuda.is_available():
 
 #model = GPT.from_pretrained('gpt2')
 
-B = 32 #will this work?
+B = 64 #will this work?
 T = 1024
 total_batch_size = 524288
 assert total_batch_size % (B*T*ddp_world_size) == 0
@@ -386,7 +386,7 @@ for step in range(max_steps):
             tokens = tokens.to(device)
             mask = mask.to(device)
             with torch.no_grad():
-                with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
                     logits, loss = model(tokens)
                 pred_norm = get_most_likely_row(tokens, mask, logits)
             num_total += 1
@@ -424,7 +424,7 @@ for step in range(max_steps):
         sample_rng.manual_seed(42 + ddp_rank)
         while xgen.size(1) < max_length:
             with torch.no_grad():
-                with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
                     logits, loss = model(xgen)
                 logits = logits[:,-1,:] #B, vocab_size
                 probs = F.softmax(logits, dim=-1)
